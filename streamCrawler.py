@@ -148,7 +148,7 @@ def processTweets(tweet):
         print(e)
 
     try:
-        if(tweet['quoted_status']):
+        if('quoted_status' in tweet):
             qtweet = True
     except Exception as e:
         print(e)
@@ -236,5 +236,6 @@ while results:
         counter += 1
     else:
         #  the following let the crawler to sleep for 15 minutes; to meet the Tiwtter 15 minute restriction
+        print("sleeping")
         time.sleep(15*60)
 #
