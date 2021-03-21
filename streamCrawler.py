@@ -1,7 +1,7 @@
 import tweepy
 import json
 from pymongo import MongoClient
-from datetime import datetime
+from datetime import datetime,date
 import time
 import sys
 
@@ -13,10 +13,10 @@ MONGO_HOST = 'mongodb://localhost/twitterdb'
 
 
 #  please put your credentials below - very important
-consumer_key = "Y7Yv9GWbovGLcVfXqui9GRqkC"
-consumer_secret ="3bgadhXK5UX81liQdMb7mwVeBgAy9A2xgFTNT8ViIi3TeQOVXZ"
-access_token ="901441890670829568-jMxcpuH2vLuNtE0PQGBq5cse1tcIpqx"
-access_token_secret ="8v3ymcUyE648hm1ucyUD9aRjcyCtwLDUPMz4rlZvIYevZ"
+consumer_key = "Q8JJKByeNa2uWAocFcSHwsI2v"
+consumer_secret ="3eLkjKsIltXhP1dxRCJLtvYJLULrw0JdBAgUpy8t1DT2X9tHZM"
+access_token ="2506970325-NnZvsAsTdYrcoGtSx7YEldFAc4u1R8cQat3MZnq"
+access_token_secret ="Vhmm5rAtuFq53xSD6lBItgW4zQRdD1jW1CfexLgyDXXRq"
 
 
 auth = tweepy.OAuthHandler(consumer_key, consumer_secret )
@@ -149,16 +149,69 @@ def processTweets(tweet):
 
     quoteTweet = False
     try:
-        if(tweet['quoted_status']):
+        if('quoted_status' in tweet):
             quoteTweet = True
     except Exception as e:
         print(e)
-
+    score = qualityCheck(tweet)
+    if score < 0.5:
+        return None
     tweet1 = {'_id' : tweet_id, 'date': created, 'username': username,  'text' : text,  'geoenabled' : geoenabled,  'coordinates' : coordinates,  'location' : location,  'place_name' : place_name, 'place_country' : place_country, 'country_code': place_countrycode,  'place_coordinates' : place_coordinates, 'hashtags' : hList, 'mentions' : mList, 'source' : source, 'retweet' : retweet, 'quoteTweet' : quoteTweet}
 
     return tweet1
 
+def qualityCheck(tweet):
+    user = tweet['user']
+    if user['verified']:
+        weight = 1.5
+    else:
+        weight = 1.0
+    
+    verifiedWeight = weight/1.5
 
+    followersCount = user['followers_count']
+
+    if followersCount < 50:
+        weight = 0.5
+    elif followersCount < 5000:
+        weight = 1.0
+    elif followersCount < 10000:
+        weight = 1.5
+    elif followersCount < 100000:
+        weight = 2.0
+    elif followersCount < 200000:
+        weight = 2.5
+    elif followersCount > 200000:
+        weight = 3.0
+
+    followersWeight= weight/3
+
+
+    weight =1
+    if(user['default_profile_image']):
+        weight =0.5
+    profileWeight = weight
+    today = datetime.now()
+    s = datetime.strptime(tweet['created_at'], '%a %b %d %H:%M:%S +0000 %Y')
+    #s = time.strftime('%Y-%m-%d %H:%M:%S', time.strptime(tweet['created_at'],'%a %b %d %H:%M:%S +0000 %Y'))
+    # d1 = datetime.strptime(s, "%Y-%m-%d")
+    # d2 = datetime.strptime(today, "%Y-%m-%d")
+    daysSince = (today - s).total_seconds()/60/60/24
+    print(daysSince)
+
+    if daysSince < 1:
+        weight = 0.05
+    elif daysSince < 30:
+        weight = 0.10
+    elif daysSince < 90:
+        weight = 0.25
+    elif daysSince > 90:
+        weight = 1.0
+    accountAgeWeight = weight
+    
+    
+    qualityScore = (profileWeight + verifiedWeight + followersWeight + accountAgeWeight)/4
+    return qualityScore
 
 class StreamListener(tweepy.StreamListener):
   #This is a class provided by tweepy to access the Twitter Streaming API.
@@ -233,7 +286,7 @@ while results:
     if (counter < 180 ):
         try:
             results = api.search(geocode=geoTerm, count=100, lang="en", tweet_mode='extended', max_id=last_id) #, since_id = sinceID)
-            print(results)
+            #print(results)
         except Exception as e:
             print(e)
         counter += 1

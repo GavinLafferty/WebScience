@@ -4,13 +4,14 @@ from pymongo import MongoClient
 from datetime import datetime
 import time
 import sys
-
+import numpy
 import emoji
 import re
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score
+from sklearn.feature_extraction import text
 
 #sets up MongoDB host
 MONGO_HOST = 'mongodb://localhost/twitterdb'
@@ -18,10 +19,10 @@ MONGO_HOST = 'mongodb://localhost/twitterdb'
 
 
 #  please put your credentials below - very important
-consumer_key = "Y7Yv9GWbovGLcVfXqui9GRqkC"
-consumer_secret ="3bgadhXK5UX81liQdMb7mwVeBgAy9A2xgFTNT8ViIi3TeQOVXZ"
-access_token ="901441890670829568-jMxcpuH2vLuNtE0PQGBq5cse1tcIpqx"
-access_token_secret ="8v3ymcUyE648hm1ucyUD9aRjcyCtwLDUPMz4rlZvIYevZ"
+consumer_key = "Q8JJKByeNa2uWAocFcSHwsI2v"
+consumer_secret ="3eLkjKsIltXhP1dxRCJLtvYJLULrw0JdBAgUpy8t1DT2X9tHZM"
+access_token ="2506970325-NnZvsAsTdYrcoGtSx7YEldFAc4u1R8cQat3MZnq"
+access_token_secret ="Vhmm5rAtuFq53xSD6lBItgW4zQRdD1jW1CfexLgyDXXRq"
 
 
 auth = tweepy.OAuthHandler(consumer_key, consumer_secret )
@@ -73,7 +74,10 @@ def processTweets(tweet):
         tweet_id = tweet['id_str']  # The Tweet ID from Twitter in string format
         username = tweet['user']['screen_name']  # The username of the Tweet author
         # followers = t['user']['followers_count']  # The number of followers the Tweet author has
-        text = tweet['text']  # The entire body of the Tweet
+        if 'text' in tweet:
+            text = tweet['text']  # The entire body of the Tweet
+        else:
+            text = tweet['full_text']
 
         #The below lines deal with duplicate data
         collections = db.collection_names()
@@ -83,58 +87,6 @@ def processTweets(tweet):
                     return None
 
         #The below lines deal with redundent data
-        user = tweet['user']
-        if user['verified']:
-            weight = 1.5
-        else:
-            weight = 1.0
-        
-        verifiedWeight = weight/1.5
-
-        followersCount = user['followers_count']
-
-        if followersCount < 50:
-            weight = 0.5
-        elif followersCount < 5000:
-            weight = 1.0
-        elif followersCount < 10000:
-            weight = 1.5
-        elif followersCount < 100000:
-            weight = 2.0
-        elif followersCount < 200000:
-            weight = 2.5
-        elif followersCount > 200000:
-            weight = 3.0
-
-        followersWeight= weight/3
-
-
-        weight =1
-        if(User['default_profile_image']):
-            weight =0.5
-        profileWeight = weight
-
-        createdAt = user['created_at']
-        today = date.today()
-
-        d1 = datetime.strptime(createdAt, "%Y-%m-%d")
-        d2 = datetime.strptime(today, "%Y-%m-%d")
-        daysSince = abs((d2 - d1).days)
-
-        if daysSince < 1:
-            weight = 0.05
-        elif daysSince < 30:
-            weight = 0.10
-        elif daysSince < 90:
-            weight = 0.25
-        elif daysSince > 90:
-            weight = 1.0
-        accountAgeWeight = weight
-        
-        
-        qualityScore = (profileWeight + verifiedWeight + followersWeight + accountAgeWeight)/4
-
-        
 
     except Exception as e:
         # if this happens, there is something wrong with JSON, so ignore this tweet
@@ -192,6 +144,7 @@ def processTweets(tweet):
         # print(coordinates)
     geoenabled = tweet['user']['geo_enabled']
     location = tweet['user']['location']
+    verified = tweet['user']['verified']
 
 
     if ((geoenabled) and (text.startswith('RT') == False)):
@@ -238,21 +191,62 @@ def processTweets(tweet):
                     photoCount += 1
                 elif x['type'] == 'animated_gif':
                     gifCount += 1
-    
-
-    '''
-    try:
-        if('media_url' in tweet):
-            tweetMedia = tweet['media_url']
-    except Exception as e:
-        print(e)
-    '''
-
-    tweet1 = {'_id' : tweet_id, 'date': created, 'username': username,  'text' : text,  'geoenabled' : geoenabled,  'coordinates' : coordinates,  'location' : location,  'place_name' : place_name, 'place_country' : place_country, 'country_code': place_countrycode,  'place_coordinates' : place_coordinates, 'hashtags' : hList, 'mentions' : mList, 'source' : source, 'retweet' : retweet, 'quoteTweet' : quoteTweet, 'media' : mediaList, 'photoCount': photoCount, 'videoCount': videoCount, 'gifCount': gifCount}
+    score = qualityCheck(tweet)
+    redundant = False
+    if score < 0.5:
+        redundant = True
+    tweet1 = {'_id' : tweet_id, 'date': created, 'username': username,  'text' : text,  'geoenabled' : geoenabled,  'coordinates' : coordinates,  'location' : location,  'place_name' : place_name, 'place_country' : place_country, 'country_code': place_countrycode,  'place_coordinates' : place_coordinates, 'hashtags' : hList, 'mentions' : mList, 'source' : source, 'retweet' : retweet, 'quoteTweet' : quoteTweet, 'media' : mediaList, 'photoCount': photoCount, 'videoCount': videoCount, 'gifCount': gifCount, 'redundant': redundant, 'verified':verified}
 
     return tweet1
 
+def qualityCheck(tweet):
+    user = tweet['user']
+    if user['verified']:
+        weight = 1.5
+    else:
+        weight = 1.0
+    
+    verifiedWeight = weight/1.5
 
+    followersCount = user['followers_count']
+
+    if followersCount < 50:
+        weight = 0.5
+    elif followersCount < 5000:
+        weight = 1.0
+    elif followersCount < 10000:
+        weight = 1.5
+    elif followersCount < 100000:
+        weight = 2.0
+    elif followersCount < 200000:
+        weight = 2.5
+    elif followersCount > 200000:
+        weight = 3.0
+
+    followersWeight= weight/3
+
+
+    weight =1
+    if(user['default_profile_image']):
+        weight =0.5
+    profileWeight = weight
+    today = datetime.now()
+    s = datetime.strptime(tweet['created_at'], '%a %b %d %H:%M:%S +0000 %Y')
+    daysSince = (today - s).total_seconds()/60/60/24
+
+    if daysSince < 1:
+        weight = 0.05
+    elif daysSince < 30:
+        weight = 0.10
+    elif daysSince < 90:
+        weight = 0.25
+    elif daysSince > 90:
+        weight = 1.0
+    accountAgeWeight = weight
+    
+    
+    qualityScore = (profileWeight + verifiedWeight + followersWeight + accountAgeWeight)/4
+    return qualityScore
 
 class StreamListener(tweepy.StreamListener):
   #This is a class provided by tweepy to access the Twitter Streaming API.
@@ -325,44 +319,32 @@ sinceID = None
 results = True
 
 def getText(tweet_collection):
-    usernames,hashtags,text = [],[],[]
+    text = []
     alldata = tweet_collection.find()
     for tweet in alldata:
-
-        ulower = str(tweet['username']).lower()
-        htlower = str(tweet['hashtags']).lower()
         tlower = str(tweet['text']).lower()
-        usernames.append(ulower)
-        hashtags.append(htlower)
         text.append(tlower)
 
-    return usernames,hashtags,text
+    return text
     
-def cluster(usernames,hashtags,texts):
-    vectorizer = TfidfVectorizer(stop_words='english')
+def cluster(texts):
+    my_stop_words = text.ENGLISH_STOP_WORDS.union(["https", "rt", "retweet", "didn","amp"])
+    vectorizer = TfidfVectorizer(stop_words=my_stop_words)
     n = 8
 
-    username_vector = vectorizer.fit_transform(usernames)
-    hashtag_vector = vectorizer.fit_transform(hashtags)
     text_vector = vectorizer.fit_transform(texts)
-
-    usernames_cluster = KMeans(n_clusters=n,init='k-means++',max_iter=100,n_init=1)
-    usernames_cluster.fit(username_vector)
-
-    hashtags_cluster = KMeans(n_clusters=n,init='k-means++',max_iter=100,n_init=1)
-    hashtags_cluster.fit(hashtag_vector)
-
     text_cluster = KMeans(n_clusters=n,init='k-means++',max_iter=100,n_init=1)
     text_cluster.fit(text_vector)
 
-    return vectorizer,usernames_cluster,hashtags_cluster,text_cluster
+    return vectorizer,text_cluster
 
 def clusterize(vectorizer,group):
     n = 8
     unique, counts = numpy.unique(group.labels_, return_counts=True)
     sizes = dict(zip(unique, counts))
     order = dict(sorted(sizes.items(), key=lambda item: item[1],reverse=True))
-    print(order.keys())
+    with open('cluster_sizes.txt', 'wt') as file:
+        file.write(str(order))
     centroids = group.cluster_centers_.argsort()[:,::-1]
     text = vectorizer.get_feature_names()
     clusters = []
@@ -378,11 +360,11 @@ runs = 0
 
 time.sleep(5*60)
 
-sc,ht,t = getText(db.tweets)
-vec,scK,htK,tK = cluster(sc,ht,t)
+t = getText(db.tweets)
+vec,tK = cluster(t)
 
 clusters, order = clusterize(vec,tK)
-counts = [30, 28, 26, 24, 22, 20, 16, 14]
+counts = [35,30,30,25,20,15,15,10]
 orderedClusters = []
 for x in order:
     orderedClusters.append(clusters[x])
@@ -396,11 +378,32 @@ while runs<4:
 
         collection = db[name]
         for word in cluster:
-            results = api.search(q=word,geocode=geoTerm, count=count, lang="en", tweet_mode='extended', max_id=last_id) #, since_id = sinceID)
-            for tweet in results["statuses"]:
-                try:
-                    collection.insert_one(processTweets(tweet))
-                except Exception as e:
-                    print(e)
+            for i in range(int(count/5)):
+                
+                results = api.search(q=word,geocode=geoTerm, count=100, lang="en", tweet_mode='extended', max_id=last_id) #, since_id = sinceID)
+                for tweet in results:
+                    try:
+                        t = json.dumps(tweet._json)
+                        collection.insert_one(processTweets(t))
+                    except Exception as e:
+                        print(e)
     runs +=1
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+    print("Sleeeeeep")
+
     time.sleep(15*60)
+
+sys.exit(0)
