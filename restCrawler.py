@@ -272,4 +272,3 @@ for cluster in clusters:
                 collection.insert_one(processTweets(tweet))
             except Exception as e:
                 print(e)
-

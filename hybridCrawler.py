@@ -8,8 +8,13 @@ import sys
 import emoji
 import re
 
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from sklearn.metrics import adjusted_rand_score
+
 #sets up MongoDB host
 MONGO_HOST = 'mongodb://localhost/twitterdb'
+
 
 
 #  please put your credentials below - very important
@@ -69,6 +74,68 @@ def processTweets(tweet):
         username = tweet['user']['screen_name']  # The username of the Tweet author
         # followers = t['user']['followers_count']  # The number of followers the Tweet author has
         text = tweet['text']  # The entire body of the Tweet
+
+        #The below lines deal with duplicate data
+        collections = db.collection_names()
+        for collection in collections:
+            for x in db[collection].find():
+                if tweet_id == x['_id']:
+                    return None
+
+        #The below lines deal with redundent data
+        user = tweet['user']
+        if user['verified']:
+            weight = 1.5
+        else:
+            weight = 1.0
+        
+        verifiedWeight = weight/1.5
+
+        followersCount = user['followers_count']
+
+        if followersCount < 50:
+            weight = 0.5
+        elif followersCount < 5000:
+            weight = 1.0
+        elif followersCount < 10000:
+            weight = 1.5
+        elif followersCount < 100000:
+            weight = 2.0
+        elif followersCount < 200000:
+            weight = 2.5
+        elif followersCount > 200000:
+            weight = 3.0
+
+        followersWeight= weight/3
+
+
+        weight =1
+        if(User['default_profile_image']):
+            weight =0.5
+        profileWeight = weight
+
+        createdAt = user['created_at']
+        today = date.today()
+
+        d1 = datetime.strptime(createdAt, "%Y-%m-%d")
+        d2 = datetime.strptime(today, "%Y-%m-%d")
+        daysSince = abs((d2 - d1).days)
+
+        if daysSince < 1:
+            weight = 0.05
+        elif daysSince < 30:
+            weight = 0.10
+        elif daysSince < 90:
+            weight = 0.25
+        elif daysSince > 90:
+            weight = 1.0
+        accountAgeWeight = weight
+        
+        
+        qualityScore = (profileWeight + verifiedWeight + followersWeight + accountAgeWeight)/4
+
+        
+
     except Exception as e:
         # if this happens, there is something wrong with JSON, so ignore this tweet
         print(e)
@@ -94,6 +161,7 @@ def processTweets(tweet):
 
     except Exception as e:
         print(e)
+        
     # print(text)
     text = cleanList(text)
     # print(text)
@@ -149,12 +217,38 @@ def processTweets(tweet):
 
     quoteTweet = False
     try:
-        if(tweet['quoted_status']):
+        if('quoted_status' in tweet):
             quoteTweet = True
     except Exception as e:
         print(e)
 
-    tweet1 = {'_id' : tweet_id, 'date': created, 'username': username,  'text' : text,  'geoenabled' : geoenabled,  'coordinates' : coordinates,  'location' : location,  'place_name' : place_name, 'place_country' : place_country, 'country_code': place_countrycode,  'place_coordinates' : place_coordinates, 'hashtags' : hList, 'mentions' : mList, 'source' : source, 'retweet' : retweet, 'quoteTweet' : quoteTweet}
+    mediaList = False
+    photoCount = 0
+    videoCount = 0
+    gifCount = 0
+    if 'extended_entities' in tweet:
+        extendedEntities = tweet['extended_entities']
+        if ('media' in extendedEntities):
+            mediaList = []
+            for x in extendedEntities['media']:
+                mediaList.append(x['media_url'])
+                if x['type'] == 'video':
+                    videoCount += 1
+                elif x['type'] == 'photo':
+                    photoCount += 1
+                elif x['type'] == 'animated_gif':
+                    gifCount += 1
+    
+
+    '''
+    try:
+        if('media_url' in tweet):
+            tweetMedia = tweet['media_url']
+    except Exception as e:
+        print(e)
+    '''
+
+    tweet1 = {'_id' : tweet_id, 'date': created, 'username': username,  'text' : text,  'geoenabled' : geoenabled,  'coordinates' : coordinates,  'location' : location,  'place_name' : place_name, 'place_country' : place_country, 'country_code': place_countrycode,  'place_coordinates' : place_coordinates, 'hashtags' : hList, 'mentions' : mList, 'source' : source, 'retweet' : retweet, 'quoteTweet' : quoteTweet, 'media' : mediaList, 'photoCount': photoCount, 'videoCount': videoCount, 'gifCount': gifCount}
 
     return tweet1
 
@@ -165,6 +259,7 @@ class StreamListener(tweepy.StreamListener):
 
     global geoEnabled
     global geoDisabled
+
     def on_connect(self):
         # Called initially to connect to the Streaming API
         print("You are now connected to the streaming API.")
@@ -186,10 +281,12 @@ class StreamListener(tweepy.StreamListener):
         # now insert it
         #  for this to work you need to start a local mongodb server
         try:
-             collection.insert_one(tweet)
+            collection.insert_one(tweet)
         except Exception as e:
-             print(e)
+            print(e)
             # this means some Mongo db insertion errort
+        return True
+       
 
 
 
@@ -227,17 +324,83 @@ sinceID = None
 
 results = True
 
-while results:
-    # print(geoTerm)
+def getText(tweet_collection):
+    usernames,hashtags,text = [],[],[]
+    alldata = tweet_collection.find()
+    for tweet in alldata:
 
-    if (counter < 180 ):
-        try:
-            results = api.search(geocode=geoTerm, count=100, lang="en", tweet_mode='extended', max_id=last_id) #, since_id = sinceID)
-            print(results)
-        except Exception as e:
-            print(e)
-        counter += 1
-    else:
-        #  the following let the crawler to sleep for 15 minutes; to meet the Tiwtter 15 minute restriction
-        time.sleep(15*60)
-#
+        ulower = str(tweet['username']).lower()
+        htlower = str(tweet['hashtags']).lower()
+        tlower = str(tweet['text']).lower()
+        usernames.append(ulower)
+        hashtags.append(htlower)
+        text.append(tlower)
+
+    return usernames,hashtags,text
+    
+def cluster(usernames,hashtags,texts):
+    vectorizer = TfidfVectorizer(stop_words='english')
+    n = 8
+
+    username_vector = vectorizer.fit_transform(usernames)
+    hashtag_vector = vectorizer.fit_transform(hashtags)
+    text_vector = vectorizer.fit_transform(texts)
+
+    usernames_cluster = KMeans(n_clusters=n,init='k-means++',max_iter=100,n_init=1)
+    usernames_cluster.fit(username_vector)
+
+    hashtags_cluster = KMeans(n_clusters=n,init='k-means++',max_iter=100,n_init=1)
+    hashtags_cluster.fit(hashtag_vector)
+
+    text_cluster = KMeans(n_clusters=n,init='k-means++',max_iter=100,n_init=1)
+    text_cluster.fit(text_vector)
+
+    return vectorizer,usernames_cluster,hashtags_cluster,text_cluster
+
+def clusterize(vectorizer,group):
+    n = 8
+    unique, counts = numpy.unique(group.labels_, return_counts=True)
+    sizes = dict(zip(unique, counts))
+    order = dict(sorted(sizes.items(), key=lambda item: item[1],reverse=True))
+    print(order.keys())
+    centroids = group.cluster_centers_.argsort()[:,::-1]
+    text = vectorizer.get_feature_names()
+    clusters = []
+    for centre in range(n):
+        print ("CLUSTER %d:" % centre)
+        cluster = []
+        for i in centroids[centre, :5]:
+            print (' %s' % text[i])
+            cluster.append(text[i])
+        clusters.append(cluster)
+    return clusters, order.keys()
+runs = 0
+
+time.sleep(5*60)
+
+sc,ht,t = getText(db.tweets)
+vec,scK,htK,tK = cluster(sc,ht,t)
+
+clusters, order = clusterize(vec,tK)
+counts = [30, 28, 26, 24, 22, 20, 16, 14]
+orderedClusters = []
+for x in order:
+    orderedClusters.append(clusters[x])
+
+
+while runs<4:
+    for cluster, count in zip(orderedClusters,counts):
+        name = ""
+        for word in cluster:
+            name = name + " " + word
+
+        collection = db[name]
+        for word in cluster:
+            results = api.search(q=word,geocode=geoTerm, count=count, lang="en", tweet_mode='extended', max_id=last_id) #, since_id = sinceID)
+            for tweet in results["statuses"]:
+                try:
+                    collection.insert_one(processTweets(tweet))
+                except Exception as e:
+                    print(e)
+    runs +=1
+    time.sleep(15*60)
