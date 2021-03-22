@@ -19,15 +19,15 @@ MONGO_HOST = 'mongodb://localhost/twitterdb'
 
 
 #  please put your credentials below - very important
-consumer_key = "Q8JJKByeNa2uWAocFcSHwsI2v"
-consumer_secret ="3eLkjKsIltXhP1dxRCJLtvYJLULrw0JdBAgUpy8t1DT2X9tHZM"
-access_token ="2506970325-NnZvsAsTdYrcoGtSx7YEldFAc4u1R8cQat3MZnq"
-access_token_secret ="Vhmm5rAtuFq53xSD6lBItgW4zQRdD1jW1CfexLgyDXXRq"
+consumer_key = "Y7Yv9GWbovGLcVfXqui9GRqkC"
+consumer_secret ="3bgadhXK5UX81liQdMb7mwVeBgAy9A2xgFTNT8ViIi3TeQOVXZ"
+access_token ="901441890670829568-jMxcpuH2vLuNtE0PQGBq5cse1tcIpqx"
+access_token_secret ="8v3ymcUyE648hm1ucyUD9aRjcyCtwLDUPMz4rlZvIYevZ"
 
 
 auth = tweepy.OAuthHandler(consumer_key, consumer_secret )
 auth.set_access_token(access_token, access_token_secret)
-api = tweepy.API(auth)
+api = tweepy.API(auth,parser=tweepy.parsers.JSONParser())
 if (not api):
     print('Can\'t authenticate')
     print('failed cosumeer id ----------: ', consumer_key )
@@ -144,6 +144,7 @@ def processTweets(tweet):
         # print(coordinates)
     geoenabled = tweet['user']['geo_enabled']
     location = tweet['user']['location']
+    # Check if user is verified
     verified = tweet['user']['verified']
 
 
@@ -161,6 +162,7 @@ def processTweets(tweet):
             print(e)
             print('error from place details - maybe AttributeError: ... NoneType ... object has no attribute ..full_name ...')
 
+    # Check if retweet
     retweet = False
     try:
         if (text.startswith('RT')== True):
@@ -168,6 +170,7 @@ def processTweets(tweet):
     except Exception as e:
         print(e)
 
+    # Check if quote tweet
     quoteTweet = False
     try:
         if('quoted_status' in tweet):
@@ -175,6 +178,7 @@ def processTweets(tweet):
     except Exception as e:
         print(e)
 
+    # Media counters
     mediaList = False
     photoCount = 0
     videoCount = 0
@@ -183,6 +187,7 @@ def processTweets(tweet):
         extendedEntities = tweet['extended_entities']
         if ('media' in extendedEntities):
             mediaList = []
+            # For each media add url to list and add to count
             for x in extendedEntities['media']:
                 mediaList.append(x['media_url'])
                 if x['type'] == 'video':
@@ -191,15 +196,19 @@ def processTweets(tweet):
                     photoCount += 1
                 elif x['type'] == 'animated_gif':
                     gifCount += 1
+    # Check quality of user - redundancy check
     score = qualityCheck(tweet)
     redundant = False
     if score < 0.5:
         redundant = True
+
+    # Save tweet as dictionary to be inserted to database
     tweet1 = {'_id' : tweet_id, 'date': created, 'username': username,  'text' : text,  'geoenabled' : geoenabled,  'coordinates' : coordinates,  'location' : location,  'place_name' : place_name, 'place_country' : place_country, 'country_code': place_countrycode,  'place_coordinates' : place_coordinates, 'hashtags' : hList, 'mentions' : mList, 'source' : source, 'retweet' : retweet, 'quoteTweet' : quoteTweet, 'media' : mediaList, 'photoCount': photoCount, 'videoCount': videoCount, 'gifCount': gifCount, 'redundant': redundant, 'verified':verified}
 
     return tweet1
 
 def qualityCheck(tweet):
+    # Verified check
     user = tweet['user']
     if user['verified']:
         weight = 1.5
@@ -208,6 +217,7 @@ def qualityCheck(tweet):
     
     verifiedWeight = weight/1.5
 
+    # Check follower count
     followersCount = user['followers_count']
 
     if followersCount < 50:
@@ -225,11 +235,12 @@ def qualityCheck(tweet):
 
     followersWeight= weight/3
 
-
+    # Check profile image 
     weight =1
     if(user['default_profile_image']):
         weight =0.5
     profileWeight = weight
+    # Check account age
     today = datetime.now()
     s = datetime.strptime(tweet['created_at'], '%a %b %d %H:%M:%S +0000 %Y')
     daysSince = (today - s).total_seconds()/60/60/24
@@ -244,7 +255,7 @@ def qualityCheck(tweet):
         weight = 1.0
     accountAgeWeight = weight
     
-    
+    # Average of weight for quality score
     qualityScore = (profileWeight + verifiedWeight + followersWeight + accountAgeWeight)/4
     return qualityScore
 
@@ -318,6 +329,7 @@ sinceID = None
 
 results = True
 
+# Get text of each tweet all lower case
 def getText(tweet_collection):
     text = []
     alldata = tweet_collection.find()
@@ -326,28 +338,36 @@ def getText(tweet_collection):
         text.append(tlower)
 
     return text
-    
+
+# Cluster the tweets and return cluster vectors
 def cluster(texts):
+    # English plus web based stop words and initialise vectoriser
     my_stop_words = text.ENGLISH_STOP_WORDS.union(["https", "rt", "retweet", "didn","amp"])
     vectorizer = TfidfVectorizer(stop_words=my_stop_words)
-    n = 8
+    n = 9
 
+    # Create text vectors
     text_vector = vectorizer.fit_transform(texts)
+    # Cluster vectors together based on cosine distance
     text_cluster = KMeans(n_clusters=n,init='k-means++',max_iter=100,n_init=1)
     text_cluster.fit(text_vector)
 
     return vectorizer,text_cluster
 
 def clusterize(vectorizer,group):
-    n = 8
+    n = 9
+    # Get cluster sizes
     unique, counts = numpy.unique(group.labels_, return_counts=True)
     sizes = dict(zip(unique, counts))
     order = dict(sorted(sizes.items(), key=lambda item: item[1],reverse=True))
+    # Write to file for checking
     with open('cluster_sizes.txt', 'wt') as file:
         file.write(str(order))
+    # Sort clusters
     centroids = group.cluster_centers_.argsort()[:,::-1]
     text = vectorizer.get_feature_names()
     clusters = []
+    # Get top five words for each cluster
     for centre in range(n):
         print ("CLUSTER %d:" % centre)
         cluster = []
@@ -357,53 +377,47 @@ def clusterize(vectorizer,group):
         clusters.append(cluster)
     return clusters, order.keys()
 runs = 0
-
+# Wait 5 mins for seed data
 time.sleep(5*60)
 
+# Get clusters and order
 t = getText(db.tweets)
 vec,tK = cluster(t)
-
 clusters, order = clusterize(vec,tK)
-counts = [35,30,30,25,20,15,15,10]
+
+# Order the clusters for searching
 orderedClusters = []
 for x in order:
     orderedClusters.append(clusters[x])
 
-
+# Four times (15*4)=60 mins
 while runs<4:
-    for cluster, count in zip(orderedClusters,counts):
-        name = ""
-        for word in cluster:
-            name = name + " " + word
+    # run searches 4 times to reach rate limit every 15 mins
+    for i in range(4):
+        # For each cluster
+        for cluster in orderedClusters:
+            collection = None
+            results = True
+            name = ""
+            # Get collection name
+            for word in cluster:
+                name = name + " " + word
 
-        collection = db[name]
-        for word in cluster:
-            for i in range(int(count/5)):
-                
+            collection = db[name]
+            # For each word
+            for word in cluster:
+                # Run query
                 results = api.search(q=word,geocode=geoTerm, count=100, lang="en", tweet_mode='extended', max_id=last_id) #, since_id = sinceID)
-                for tweet in results:
+                # FOr each returned tweet
+                for tweet in results['statuses']:
                     try:
-                        t = json.dumps(tweet._json)
-                        collection.insert_one(processTweets(t))
+                        # Add to database
+                        collection.insert_one(processTweets(tweet))
                     except Exception as e:
                         print(e)
     runs +=1
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
-    print("Sleeeeeep")
 
+    # Wait 15 mins for rate limits
     time.sleep(15*60)
-
+# End program
 sys.exit(0)

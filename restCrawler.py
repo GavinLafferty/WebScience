@@ -267,6 +267,7 @@ for cluster in clusters:
     collection = db[name]
     for word in cluster:
         results = api.search(q=word,geocode=geoTerm, count=10, lang="en", tweet_mode='extended', max_id=last_id) #, since_id = sinceID)
+        print(results)
         for tweet in results["statuses"]:
             try:
                 collection.insert_one(processTweets(tweet))

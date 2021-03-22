@@ -68,7 +68,20 @@ def processTweets(tweet):
         tweet_id = tweet['id_str']  # The Tweet ID from Twitter in string format
         username = tweet['user']['screen_name']  # The username of the Tweet author
         # followers = t['user']['followers_count']  # The number of followers the Tweet author has
-        text = tweet['text']  # The entire body of the Tweet
+        if 'text' in tweet:
+            text = tweet['text']  # The entire body of the Tweet
+        else:
+            text = tweet['full_text']
+
+        #The below lines deal with duplicate data
+        collections = db.collection_names()
+        for collection in collections:
+            for x in db[collection].find():
+                if tweet_id == x['_id']:
+                    return None
+
+        #The below lines deal with redundent data
+
     except Exception as e:
         # if this happens, there is something wrong with JSON, so ignore this tweet
         print(e)
@@ -94,6 +107,7 @@ def processTweets(tweet):
 
     except Exception as e:
         print(e)
+        
     # print(text)
     text = cleanList(text)
     # print(text)
@@ -124,6 +138,7 @@ def processTweets(tweet):
         # print(coordinates)
     geoenabled = tweet['user']['geo_enabled']
     location = tweet['user']['location']
+    verified = tweet['user']['verified']
 
 
     if ((geoenabled) and (text.startswith('RT') == False)):
@@ -153,10 +168,28 @@ def processTweets(tweet):
             quoteTweet = True
     except Exception as e:
         print(e)
+
+    mediaList = False
+    photoCount = 0
+    videoCount = 0
+    gifCount = 0
+    if 'extended_entities' in tweet:
+        extendedEntities = tweet['extended_entities']
+        if ('media' in extendedEntities):
+            mediaList = []
+            for x in extendedEntities['media']:
+                mediaList.append(x['media_url'])
+                if x['type'] == 'video':
+                    videoCount += 1
+                elif x['type'] == 'photo':
+                    photoCount += 1
+                elif x['type'] == 'animated_gif':
+                    gifCount += 1
     score = qualityCheck(tweet)
+    redundant = False
     if score < 0.5:
-        return None
-    tweet1 = {'_id' : tweet_id, 'date': created, 'username': username,  'text' : text,  'geoenabled' : geoenabled,  'coordinates' : coordinates,  'location' : location,  'place_name' : place_name, 'place_country' : place_country, 'country_code': place_countrycode,  'place_coordinates' : place_coordinates, 'hashtags' : hList, 'mentions' : mList, 'source' : source, 'retweet' : retweet, 'quoteTweet' : quoteTweet}
+        redundant = True
+    tweet1 = {'_id' : tweet_id, 'date': created, 'username': username,  'text' : text,  'geoenabled' : geoenabled,  'coordinates' : coordinates,  'location' : location,  'place_name' : place_name, 'place_country' : place_country, 'country_code': place_countrycode,  'place_coordinates' : place_coordinates, 'hashtags' : hList, 'mentions' : mList, 'source' : source, 'retweet' : retweet, 'quoteTweet' : quoteTweet, 'media' : mediaList, 'photoCount': photoCount, 'videoCount': videoCount, 'gifCount': gifCount, 'redundant': redundant, 'verified':verified}
 
     return tweet1
 
@@ -193,11 +226,7 @@ def qualityCheck(tweet):
     profileWeight = weight
     today = datetime.now()
     s = datetime.strptime(tweet['created_at'], '%a %b %d %H:%M:%S +0000 %Y')
-    #s = time.strftime('%Y-%m-%d %H:%M:%S', time.strptime(tweet['created_at'],'%a %b %d %H:%M:%S +0000 %Y'))
-    # d1 = datetime.strptime(s, "%Y-%m-%d")
-    # d2 = datetime.strptime(today, "%Y-%m-%d")
     daysSince = (today - s).total_seconds()/60/60/24
-    print(daysSince)
 
     if daysSince < 1:
         weight = 0.05
